@@ -73,7 +73,6 @@ if swimmer_name:
                     if swimmer_name.upper() in current_line.upper():
                         if any(marker in current_line for marker in ["-", "GA", "NT", ":", "."]):
                             
-                            # --- FIXED EXTRACTION LINE ---
                             # Extracting ONLY the "Lastname, Firstname" part and dropping age parameters
                             name_match = re.search(r'([A-Za-z]+,\s*[A-Za-z\s\.]+)', current_line)
                             if name_match:
@@ -95,7 +94,9 @@ if swimmer_name:
                 st.info("💡 Multiple different swimmers found with that last name! Please choose yours:")
                 chosen_profile = st.selectbox("🎯 Choose Your Profile Configuration:", list(swimmer_profiles.keys()))
             else:
-                chosen_profile = list(swimmer_profiles.keys())
+                # --- THE CRITICAL FIX ---
+                # Grab the actual string name at index 0 out of the keys list so it isn't an unhashable list format!
+                chosen_profile = list(swimmer_profiles.keys())[0]
 
             # Second Pass: Extract Event, Heat, and Lane values locally on target pages
             if chosen_profile:
