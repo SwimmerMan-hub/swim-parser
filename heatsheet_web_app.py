@@ -11,13 +11,13 @@ st.set_page_config(page_title="SwimAtlanta Meet Parser", page_icon="🏊‍♂�
 # --- DATABASE DISCOVERY SCAPER ---
 @st.cache_data(ttl=3600)
 def fetch_heatsheet_names():
-    base_url = "https://www.swimatlanta.com"
-    news_url = "https://www.swimatlanta.com/news"
+    base_url = "https://swimatlanta.com"
+    news_url = "https://swimatlanta.com/news"
     
     database = {
-        "🏆 Splash Jam Heat Sheet": "https://swimatlanta.com",
-        "🏆 AAU Lucky Splash Sunday": "https://swimatlanta.com",
-        "🏆 Betsy Dunbar LC Meet": "https://swimatlanta.com"
+        "🏆 Splash Jam Heat Sheet": "https://swimatlanta.com/f/splashjamheatsheet.pdf",
+        "🏆 AAU Lucky Splash Sunday": "https://swimatlanta.com/f/Lucky%20Splash%20Heat%20Sheets.pdf",
+        "🏆 Betsy Dunbar LC Meet": "https://swimatlanta.com/f/rev1betsysatpm.pdf"
     }
     
     try:
@@ -47,7 +47,7 @@ with st.spinner("🔄 Loading SwimAtlanta heat sheet names..."):
 selected_sheet = st.selectbox("📅 Select the Heat Sheet you want to look at:", list(MEET_DATABASE.keys()))
 TARGET_URL = MEET_DATABASE[selected_sheet]
 
-swimmer_name = st.text_input("👤 Enter Swimmer Last Name:", placeholder="e.g., Bansen")
+swimmer_name = st.text_input("👤 Enter Swimmer Last Name:", placeholder="e.g., Bhardwaj")
 
 # --- PARSING ENGINE ---
 if swimmer_name:
@@ -56,116 +56,112 @@ if swimmer_name:
         response = requests.get(TARGET_URL, headers=headers, timeout=15)
         response.raise_for_status()
         
-        pdf_file = io.BytesIO(response.content)
-        reader = pypdf.PdfReader(pdf_file)
-        
-        # This dictionary will group match instances by a clean Swimmer Identity string
-        # Format of key: "BANSEN, JACK (AGE 11)" -> value: list of page/line details
-        swimmer_profiles = {}
-
-        # First Pass: Find all matches and group them by the swimmer's exact name identity
-        for page_num, page in enumerate(reader.pages, start=1):
-            lines = [line.strip() for line in page.extract_text().split('\n') if line.strip()]
-            
-            for index, current_line in enumerate(lines):
-                if swimmer_name.upper() in current_line.upper():
-                    # Ensure it looks like a competitor entry row
-                    if any(marker in current_line for marker in ["-", "GA", "NT", ":", "."]):
-                        
-                        # --- SMART PROFILE EXTRACTION ---
-                        # Split by common spacing to isolate the Name and Age elements
-                        parts = current_line.split()
-                        
-                        # Find the full name fragment (usually index 1 and 2 or text leading up to numbers)
-                        # We build an identity block by tracking the name string and age digit
-                        identity_key = current_line # Default fallback
-                        
-                        # Regex helper to find the last name matching pattern and extract age (a 2-digit number near the name)
-                        age_match = re.search(r'\b(\d{1,2})\b', current_line)
-                        age_str = f"Age {age_match.group(1)}" if age_match else "Unknown Age"
-                        
-                        # Look for the structural pattern: "Lastname, Firstname" to make a clean menu title
-                        name_match = re.search(r'([A-Za-z]+,\s*[A-Za-z\s\.]+)', current_line)
-                        if name_match:
-                            identity_key = f"👤 {name_match.group(1).strip().title()} ({age_str})"
-                        
-                        if identity_key not in swimmer_profiles:
-                            swimmer_profiles[identity_key] = []
-                            
-                        # Save the tracking coordinates for this specific race appearance
-                        swimmer_profiles[identity_key].append({"page": page_num, "raw_line": current_line})
-
-        # --- DEDUPLICATION SELECTION LOGIC ---
-        chosen_profile = None
-        
-        if len(swimmer_profiles) == 0:
-            st.warning(f"❌ Could not find '{swimmer_name}' inside the selected sheet.")
-        elif len(swimmer_profiles) > 1:
-            # Entirely DIFFERENT people with the same last name found! Prompt selector
-            st.info("💡 Multiple different swimmers found with that last name! Please choose yours:")
-            chosen_profile = st.selectbox("🎯 Choose Your Profile Configuration:", list(swimmer_profiles.keys()))
+        # --- NEW SAFETY CHECK: Is it a real PDF file? ---
+        # Real PDF files always start with the characters "%PDF" in their raw computer data
+        if not response.content or b"%PDF" not in response.content[:5]:
+            st.warning(f"🔄 **Meet Sheet Notice:** SwimAtlanta is currently uploading or updating the files for **{selected_sheet}** on their server! Please try a different meet sheet or check back in a few minutes.")
         else:
-            # Only ONE unique person matches. Select them automatically!
-            chosen_profile = list(swimmer_profiles.keys())[0]
-
-        # Second Pass: Extract Event, Heat, and Lane values locally on target pages
-        if chosen_profile:
-            schedule_blocks = []
-            event_count = 0
+            pdf_file = io.BytesIO(response.content)
+            reader = pypdf.PdfReader(pdf_file)
             
-            # Loop through all the distinct race instances recorded for this exact person!
-            for match_data in swimmer_profiles[chosen_profile]:
-                event_count += 1
-                target_page_num = match_data["page"]
-                target_line_text = match_data["raw_line"]
-                
-                # Load lines for this exact page to keep lane counting isolated to its local section
-                page = reader.pages[target_page_num - 1]
+            # This dictionary groups match instances by a clean Swimmer Identity string
+            swimmer_profiles = {}
+
+            # First Pass: Find all matches and group them by the swimmer's exact name identity
+            for page_num, page in enumerate(reader.pages, start=1):
                 lines = [line.strip() for line in page.extract_text().split('\n') if line.strip()]
                 
                 for index, current_line in enumerate(lines):
-                    if current_line == target_line_text:
-                        
-                        # Backward Lookup for Event Title
-                        matched_event = "Unknown Event"
-                        for back_idx in range(index, -1, -1):
-                            line_check = lines[back_idx]
-                            if "EVENT" in line_check.upper() or ("#" in line_check and any(word in line_check for word in ["Free", "Fly", "Back", "Breast", "Medley", "Relay", "LC", "SC", "Girls", "Boys"])):
-                                matched_event = line_check
-                                break
-                        
-                        # Backward Lookup for Heat header
-                        matched_heat = "Unknown Heat"
-                        lane_counter = 0
-                        for back_idx in range(index, -1, -1):
-                            line_check = lines[back_idx]
-                            if line_check.upper().startswith("HEAT") or "HEAT " in line_check.upper():
-                                matched_heat = line_check
-                                break
-                            # Count swimmers listed under this specific Heat
-                            if back_idx < index and any(m in line_check for m in ["-", "GA", "NT", ":", "."]):
-                                lane_counter += 1
-                        
-                        lane_counter += 1  # Local position mapping
-                        
-                        schedule_blocks.append({
-                            "event": matched_event,
-                            "heat": matched_heat,
-                            "lane": f"Lane {lane_counter}",
-                            "line": current_line,
-                            "page": target_page_num
-                        })
-                        break # Stop looking on this page once this race row matches coordinates
+                    if swimmer_name.upper() in current_line.upper():
+                        # Ensure it looks like a competitor entry row
+                        if any(marker in current_line for marker in ["-", "GA", "NT", ":", "."]):
+                            
+                            # Find the last name matching pattern and extract age
+                            age_match = re.search(r'\b(\d{1,2})\b', current_line)
+                            age_str = f"Age {age_match.group(1)}" if age_match else "Unknown Age"
+                            
+                            # Look for the structural pattern: "Lastname, Firstname" to make a clean menu title
+                            name_match = re.search(r'([A-Za-z]+,\s*[A-Za-z\s\.]+)', current_line)
+                            if name_match:
+                                identity_key = f"👤 {name_match.group(1).strip().title()} ({age_str})"
+                            else:
+                                identity_key = f"👤 {swimmer_name.title()} ({age_str})"
+                            
+                            if identity_key not in swimmer_profiles:
+                                swimmer_profiles[identity_key] = []
+                                
+                            # Save the tracking coordinates for this specific race appearance
+                            swimmer_profiles[identity_key].append({"page": page_num, "raw_line": current_line})
 
-            # --- RENDER THE COMPLETE INTEGRATED SCHEDULE ---
-            st.metric(label="Total Races Found", value=event_count)
-            st.subheader(f"📋 Verified Schedule for {chosen_profile}:")
+            # --- DEDUPLICATION SELECTION LOGIC ---
+            chosen_profile = None
             
-            for i, block in enumerate(schedule_blocks, start=1):
-                with st.expander(f"🏅 Race {i}: {block['event']}", expanded=True):
-                    st.write(f"🔥 **{block['heat']}**")
-                    st.write(f"🚪 **Lane Assignment:** {block['lane']} *(Page {block['page']})*")
-                    st.caption(f"📝 Line Entry: {block['line']}")
+            if len(swimmer_profiles) == 0:
+                st.warning(f"❌ Could not find '{swimmer_name}' inside the selected sheet.")
+            elif len(swimmer_profiles) > 1:
+                st.info("💡 Multiple different swimmers found with that last name! Please choose yours:")
+                chosen_profile = st.selectbox("🎯 Choose Your Profile Configuration:", list(swimmer_profiles.keys()))
+            else:
+                chosen_profile = list(swimmer_profiles.keys())[0]
+
+            # Second Pass: Extract Event, Heat, and Lane values locally on target pages
+            if chosen_profile:
+                schedule_blocks = []
+                event_count = 0
+                
+                # Loop through all the distinct race instances recorded for this exact person!
+                for match_data in swimmer_profiles[chosen_profile]:
+                    event_count += 1
+                    target_page_num = match_data["page"]
+                    target_line_text = match_data["raw_line"]
+                    
+                    # Load lines for this exact page to keep lane counting isolated to its local section
+                    page = reader.pages[target_page_num - 1]
+                    lines = [line.strip() for line in page.extract_text().split('\n') if line.strip()]
+                    
+                    for index, current_line in enumerate(lines):
+                        if current_line == target_line_text:
+                            
+                            # Backward Lookup for Event Title
+                            matched_event = "Unknown Event"
+                            for back_idx in range(index, -1, -1):
+                                line_check = lines[back_idx]
+                                if "EVENT" in line_check.upper() or ("#" in line_check and any(word in line_check for word in ["Free", "Fly", "Back", "Breast", "Medley", "Relay", "LC", "SC", "Girls", "Boys"])):
+                                    matched_event = line_check
+                                    break
+                            
+                            # Backward Lookup for Heat header
+                            matched_heat = "Unknown Heat"
+                            lane_counter = 0
+                            for back_idx in range(index, -1, -1):
+                                line_check = lines[back_idx]
+                                if line_check.upper().startswith("HEAT") or "HEAT " in line_check.upper():
+                                    matched_heat = line_check
+                                    break
+                                # Count swimmers listed under this specific Heat
+                                if back_idx < index and any(m in line_check for m in ["-", "GA", "NT", ":", "."]):
+                                    lane_counter += 1
+                            
+                            lane_counter += 1  # Local position mapping
+                            
+                            schedule_blocks.append({
+                                "event": matched_event,
+                                "heat": matched_heat,
+                                "lane": f"Lane {lane_counter}",
+                                "line": current_line,
+                                "page": target_page_num
+                            })
+                            break # Stop looking on this page once this race row matches coordinates
+
+                # --- RENDER THE COMPLETE INTEGRATED SCHEDULE ---
+                st.metric(label="Total Races Found", value=event_count)
+                st.subheader(f"📋 Verified Schedule for {chosen_profile}:")
+                
+                for i, block in enumerate(schedule_blocks, start=1):
+                    with st.expander(f"🏅 Race {i}: {block['event']}", expanded=True):
+                        st.write(f"🔥 **{block['heat']}**")
+                        st.write(f"🚪 **Lane Assignment:** {block['lane']} *(Page {block['page']})*")
+                        st.caption(f"📝 Line Entry: {block['line']}")
 
     except Exception as e:
-        st.error(f"⚠️ Error parsing the chosen file stream: {e}")
+        st.error(f"⚠️ Error accessing the file stream: {e}")
