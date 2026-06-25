@@ -1,22 +1,23 @@
 import io
+import re
 import requests
 import pypdf
 import streamlit as st
 from bs4 import BeautifulSoup
 
-# App setup
+# App layout setup
 st.set_page_config(page_title="SwimAtlanta Meet Parser", page_icon="🏊‍♂️", layout="centered")
 
 # --- DATABASE DISCOVERY SCAPER ---
 @st.cache_data(ttl=3600)
 def fetch_heatsheet_names():
-    base_url = "https://swimatlanta.com"
-    news_url = "https://swimatlanta.com/news"
+    base_url = "https://www.swimatlanta.com"
+    news_url = "https://www.swimatlanta.com/news"
     
     database = {
-        "🏆 Splash Jam Heat Sheet": "https://swimatlanta.com/f/splashjamheatsheet.pdf",
-        "🏆 AAU Lucky Splash Sunday": "https://swimatlanta.com/f/Lucky%20Splash%20Heat%20Sheets.pdf",
-        "🏆 Betsy Dunbar LC Meet": "https://swimatlanta.com/f/rev1betsysatpm.pdf"
+        "🏆 Splash Jam Heat Sheet": "https://swimatlanta.com",
+        "🏆 AAU Lucky Splash Sunday": "https://swimatlanta.com",
+        "🏆 Betsy Dunbar LC Meet": "https://swimatlanta.com"
     }
     
     try:
@@ -58,50 +59,72 @@ if swimmer_name:
         pdf_file = io.BytesIO(response.content)
         reader = pypdf.PdfReader(pdf_file)
         
-        # This dictionary will group entries by the swimmer's exact text row
-        swimmer_matches = {}
+        # This dictionary will group match instances by a clean Swimmer Identity string
+        # Format of key: "BANSEN, JACK (AGE 11)" -> value: list of page/line details
+        swimmer_profiles = {}
 
-        # First Pass: Find all lines matching the name across the entire document
+        # First Pass: Find all matches and group them by the swimmer's exact name identity
         for page_num, page in enumerate(reader.pages, start=1):
             lines = [line.strip() for line in page.extract_text().split('\n') if line.strip()]
             
             for index, current_line in enumerate(lines):
                 if swimmer_name.upper() in current_line.upper():
-                    # Smart team checker: Looks for standard swim line markers like team hyphens, NT, seed times with colons/periods
-                    if "-" in current_line or "GA" in current_line or "NT" in current_line or ":" in current_line or "." in current_line:
-                        if current_line not in swimmer_matches:
-                            swimmer_matches[current_line] = []
-                        # Save the page number and line position so we can reference it exactly later
-                        swimmer_matches[current_line].append({"page": page_num, "line_idx": index})
+                    # Ensure it looks like a competitor entry row
+                    if any(marker in current_line for marker in ["-", "GA", "NT", ":", "."]):
+                        
+                        # --- SMART PROFILE EXTRACTION ---
+                        # Split by common spacing to isolate the Name and Age elements
+                        parts = current_line.split()
+                        
+                        # Find the full name fragment (usually index 1 and 2 or text leading up to numbers)
+                        # We build an identity block by tracking the name string and age digit
+                        identity_key = current_line # Default fallback
+                        
+                        # Regex helper to find the last name matching pattern and extract age (a 2-digit number near the name)
+                        age_match = re.search(r'\b(\d{1,2})\b', current_line)
+                        age_str = f"Age {age_match.group(1)}" if age_match else "Unknown Age"
+                        
+                        # Look for the structural pattern: "Lastname, Firstname" to make a clean menu title
+                        name_match = re.search(r'([A-Za-z]+,\s*[A-Za-z\s\.]+)', current_line)
+                        if name_match:
+                            identity_key = f"👤 {name_match.group(1).strip().title()} ({age_str})"
+                        
+                        if identity_key not in swimmer_profiles:
+                            swimmer_profiles[identity_key] = []
+                            
+                        # Save the tracking coordinates for this specific race appearance
+                        swimmer_profiles[identity_key].append({"page": page_num, "raw_line": current_line})
 
-        # --- DEDUPLICATION FILTER ---
-        chosen_swimmer_line = None
+        # --- DEDUPLICATION SELECTION LOGIC ---
+        chosen_profile = None
         
-        if len(swimmer_matches) == 0:
+        if len(swimmer_profiles) == 0:
             st.warning(f"❌ Could not find '{swimmer_name}' inside the selected sheet.")
-        elif len(swimmer_matches) > 1:
-            st.info("💡 Multiple swimmers found with that last name! Please choose yours below:")
-            chosen_swimmer_line = st.selectbox("🎯 Choose Your Exact Entry Line:", list(swimmer_matches.keys()))
+        elif len(swimmer_profiles) > 1:
+            # Entirely DIFFERENT people with the same last name found! Prompt selector
+            st.info("💡 Multiple different swimmers found with that last name! Please choose yours:")
+            chosen_profile = st.selectbox("🎯 Choose Your Profile Configuration:", list(swimmer_profiles.keys()))
         else:
-            chosen_swimmer_line = list(swimmer_matches.keys())[0]
+            # Only ONE unique person matches. Select them automatically!
+            chosen_profile = list(swimmer_profiles.keys())[0]
 
-        # Second Pass: Extract exact details ONLY for the matches of the selected swimmer line
-        if chosen_swimmer_line:
+        # Second Pass: Extract Event, Heat, and Lane values locally on target pages
+        if chosen_profile:
             schedule_blocks = []
             event_count = 0
             
-            # Loop back through the exact pages where this specific swimmer line was found
-            for match_info in swimmer_matches[chosen_swimmer_line]:
+            # Loop through all the distinct race instances recorded for this exact person!
+            for match_data in swimmer_profiles[chosen_profile]:
                 event_count += 1
-                target_page_num = match_info["page"]
+                target_page_num = match_data["page"]
+                target_line_text = match_data["raw_line"]
                 
-                # Reload the lines for that specific page to keep counting local
+                # Load lines for this exact page to keep lane counting isolated to its local section
                 page = reader.pages[target_page_num - 1]
                 lines = [line.strip() for line in page.extract_text().split('\n') if line.strip()]
                 
-                # Find where our swimmer sits on this specific page text array
                 for index, current_line in enumerate(lines):
-                    if current_line == chosen_swimmer_line:
+                    if current_line == target_line_text:
                         
                         # Backward Lookup for Event Title
                         matched_event = "Unknown Event"
@@ -111,7 +134,7 @@ if swimmer_name:
                                 matched_event = line_check
                                 break
                         
-                        # Backward Lookup for Heat and Lane counting
+                        # Backward Lookup for Heat header
                         matched_heat = "Unknown Heat"
                         lane_counter = 0
                         for back_idx in range(index, -1, -1):
@@ -119,11 +142,11 @@ if swimmer_name:
                             if line_check.upper().startswith("HEAT") or "HEAT " in line_check.upper():
                                 matched_heat = line_check
                                 break
-                            # Count rows between the Heat header and the swimmer that look like competitor data
-                            if back_idx < index and ("-" in line_check or "GA" in line_check or "NT" in line_check or ":" in line_check or "." in line_check):
+                            # Count swimmers listed under this specific Heat
+                            if back_idx < index and any(m in line_check for m in ["-", "GA", "NT", ":", "."]):
                                 lane_counter += 1
                         
-                        lane_counter += 1  # Add 1 for our swimmer's position
+                        lane_counter += 1  # Local position mapping
                         
                         schedule_blocks.append({
                             "event": matched_event,
@@ -132,11 +155,11 @@ if swimmer_name:
                             "line": current_line,
                             "page": target_page_num
                         })
-                        break # Stop searching this page once this specific instance is processed
+                        break # Stop looking on this page once this race row matches coordinates
 
-            # --- RENDER THE FINAL FIXED SCHEDULE ---
-            st.metric(label="Races Found", value=event_count)
-            st.subheader("📋 Verified Schedule:")
+            # --- RENDER THE COMPLETE INTEGRATED SCHEDULE ---
+            st.metric(label="Total Races Found", value=event_count)
+            st.subheader(f"📋 Verified Schedule for {chosen_profile}:")
             
             for i, block in enumerate(schedule_blocks, start=1):
                 with st.expander(f"🏅 Race {i}: {block['event']}", expanded=True):
