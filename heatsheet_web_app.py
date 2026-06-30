@@ -47,7 +47,7 @@ with st.spinner("🔄 Loading SwimAtlanta heat sheet names..."):
 selected_sheet = st.selectbox("📅 Select the Heat Sheet you want to look at:", list(MEET_DATABASE.keys()))
 TARGET_URL = MEET_DATABASE[selected_sheet]
 
-swimmer_name = st.text_input("👤 Enter Swimmer Last Name:", placeholder="e.g., Bhardwaj")
+swimmer_name = st.text_input("👤 Enter Swimmer Last Name:", placeholder="e.g., Smith")
 
 # --- PARSING ENGINE ---
 if swimmer_name:
