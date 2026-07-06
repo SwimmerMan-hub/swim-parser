@@ -5,11 +5,11 @@ import pypdf
 import streamlit as st
 from bs4 import BeautifulSoup
 
-# App layout setup
+# App setup: centered layout for a clean, single-focused screen
 st.set_page_config(page_title="SwimAtlanta Meet Parser", page_icon="🏊‍♂️", layout="centered")
 
 # --- DATABASE DISCOVERY SCAPER ---
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600)  # Caches the names for 1 hour so it loads instantly
 def fetch_heatsheet_names():
     base_url = "https://swimatlanta.com"
     news_url = "https://swimatlanta.com/news"
@@ -17,6 +17,7 @@ def fetch_heatsheet_names():
     database = {
         "🏆 Splash Jam Heat Sheet": "https://swimatlanta.com/f/splashjamheatsheet.pdf",
         "🏆 AAU Lucky Splash Sunday": "https://swimatlanta.com/f/Lucky%20Splash%20Heat%20Sheets.pdf",
+        "🏆 Father's Day Spectacular": "https://swimatlanta.com/f/FathersDayHeatSheet.pdf",
         "🏆 Betsy Dunbar LC Meet": "https://swimatlanta.com/f/rev1betsysatpm.pdf"
     }
     
@@ -37,19 +38,19 @@ def fetch_heatsheet_names():
     return database
 
 # --- UI WINDOW CONTENT ---
-st.title("🏊‍♂️ SwimAtlanta Automated Meet Parser")
-st.write("Select a heat sheet, type your name, and extract your schedule configuration.")
+st.title("🏊‍♂️ SwimAtlanta Heat Sheet Parser")
+st.write("Pick an active meet from the database, type a last name, and instantly generate an event map.")
 st.markdown("---")
 
-with st.spinner("🔄 Loading SwimAtlanta heat sheet names..."):
+with st.spinner("🔄 Checking SwimAtlanta database feed..."):
     MEET_DATABASE = fetch_heatsheet_names()
 
-selected_sheet = st.selectbox("📅 Select the Heat Sheet you want to look at:", list(MEET_DATABASE.keys()))
+selected_sheet = st.selectbox("📅 Choose Your Swim Meet Session:", list(MEET_DATABASE.keys()))
 TARGET_URL = MEET_DATABASE[selected_sheet]
 
-swimmer_name = st.text_input("👤 Enter Swimmer Last Name:", placeholder="e.g., Smith")
+swimmer_name = st.text_input("👤 Enter Swimmer Last Name:", placeholder="Type a name to extract schedules...")
 
-# --- PARSING ENGINE ---
+# --- EXTRACTION ENGINE ---
 if swimmer_name:
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -62,18 +63,22 @@ if swimmer_name:
             pdf_file = io.BytesIO(response.content)
             reader = pypdf.PdfReader(pdf_file)
             
-            # This dictionary groups match instances by a clean Swimmer Identity string
             swimmer_profiles = {}
 
             # First Pass: Find all matches and group them by the swimmer's exact name identity
             for page_num, page in enumerate(reader.pages, start=1):
                 lines = [line.strip() for line in page.extract_text().split('\n') if line.strip()]
                 
+                # --- NEW PSYCH SHEET FILTER SHIELD ---
+                # If the page layout text explicitly contains "Psych Sheet", skip it entirely
+                page_text_block = page.extract_text().upper()
+                if "PSYCH SHEET" in page_text_block or "SEED LIST" in page_text_block:
+                    continue
+
                 for index, current_line in enumerate(lines):
                     if swimmer_name.upper() in current_line.upper():
                         if any(marker in current_line for marker in ["-", "GA", "NT", ":", "."]):
                             
-                            # Extracting ONLY the "Lastname, Firstname" part and dropping age parameters
                             name_match = re.search(r'([A-Za-z]+,\s*[A-Za-z\s\.]+)', current_line)
                             if name_match:
                                 identity_key = f"👤 {name_match.group(1).strip().title()}"
@@ -89,14 +94,12 @@ if swimmer_name:
             chosen_profile = None
             
             if len(swimmer_profiles) == 0:
-                st.warning(f"❌ Could not find '{swimmer_name}' inside the selected sheet.")
+                st.error(f"❌ Could not find '{swimmer_name}' inside this heat sheet. Check your spelling or select a different meet session.")
             elif len(swimmer_profiles) > 1:
-                st.info("💡 Multiple different swimmers found with that last name! Please choose yours:")
-                chosen_profile = st.selectbox("🎯 Choose Your Profile Configuration:", list(swimmer_profiles.keys()))
+                st.info("💡 Multiple entries found with that last name! Please choose yours:")
+                chosen_profile = st.selectbox("🎯 Select Your Profile Entry Configuration:", list(swimmer_profiles.keys()))
             else:
-                # --- THE CRITICAL FIX ---
-                # Grab the actual string name at index 0 out of the keys list so it isn't an unhashable list format!
-                chosen_profile = list(swimmer_profiles.keys())[0]
+                chosen_profile = list(swimmer_profiles.keys())
 
             # Second Pass: Extract Event, Heat, and Lane values locally on target pages
             if chosen_profile:
@@ -104,7 +107,6 @@ if swimmer_name:
                 event_count = 0
                 
                 for match_data in swimmer_profiles[chosen_profile]:
-                    event_count += 1
                     target_page_num = match_data["page"]
                     target_line_text = match_data["raw_line"]
                     
@@ -135,6 +137,13 @@ if swimmer_name:
                             
                             lane_counter += 1  
                             
+                            # --- NEW CRITICAL POSITION SECURITY CHECK ---
+                            # If the heat lookup failed OR the lane calculation is physically impossible for a pool,
+                            # flag it as a non-heat sheet listing and skip displaying this block
+                            if matched_heat == "Unknown Heat" or lane_counter > 10:
+                                continue
+                                
+                            event_count += 1
                             schedule_blocks.append({
                                 "event": matched_event,
                                 "heat": matched_heat,
@@ -144,15 +153,24 @@ if swimmer_name:
                             })
                             break 
 
-                # --- RENDER CLEAN INTEGRATED SCHEDULE ---
-                st.metric(label="Total Races Found", value=event_count)
-                st.subheader(f"📋 Verified Schedule for {chosen_profile}:")
-                
-                for i, block in enumerate(schedule_blocks, start=1):
-                    with st.expander(f"🏅 Race {i}: {block['event']}", expanded=True):
-                        st.write(f"🔥 **{block['heat']}**")
-                        st.write(f"🚪 **Lane Assignment:** {block['lane']} *(Page {block['page']})*")
-                        st.caption(f"📝 Line Entry: {block['line']}")
+                # --- RENDER DISPLAY OUTPUTS ---
+                if event_count > 0:
+                    st.success("✅ Race schedule isolated successfully!")
+                    st.metric(label="📊 Total Scheduled Events Found", value=event_count)
+                    st.markdown(f"### 📋 Verified Schedule for **{chosen_profile}**")
+                    
+                    for i, block in enumerate(schedule_blocks, start=1):
+                        with st.expander(f"🏅 Race {i}: {block['event']}", expanded=True):
+                            c1, c2, c3 = st.columns(3)
+                            with c1:
+                                st.markdown(f"🔥 **{block['heat']}**")
+                            with c2:
+                                st.markdown(f"🚪 **{block['lane']}**")
+                            with c3:
+                                st.caption(f"📄 Page {block['page']}")
+                            st.caption(f"📝 Raw Row Data: `{block['line']}`")
+                else:
+                    st.warning(f"❌ '{swimmer_name}' was found in the index, but their official Heat and Lane assignments haven't been posted in this document yet.")
 
     except Exception as e:
-        st.error(f"⚠️ Error accessing the file stream: {e}")
+        st.error(f"⚠️ Error parsing the chosen file stream: {e}")
