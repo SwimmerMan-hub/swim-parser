@@ -69,8 +69,7 @@ if swimmer_name:
             for page_num, page in enumerate(reader.pages, start=1):
                 lines = [line.strip() for line in page.extract_text().split('\n') if line.strip()]
                 
-                # --- NEW PSYCH SHEET FILTER SHIELD ---
-                # If the page layout text explicitly contains "Psych Sheet", skip it entirely
+                # --- PSYCH SHEET FILTER SHIELD ---
                 page_text_block = page.extract_text().upper()
                 if "PSYCH SHEET" in page_text_block or "SEED LIST" in page_text_block:
                     continue
@@ -137,9 +136,7 @@ if swimmer_name:
                             
                             lane_counter += 1  
                             
-                            # --- NEW CRITICAL POSITION SECURITY CHECK ---
-                            # If the heat lookup failed OR the lane calculation is physically impossible for a pool,
-                            # flag it as a non-heat sheet listing and skip displaying this block
+                            # --- POSITION SECURITY CHECK ---
                             if matched_heat == "Unknown Heat" or lane_counter > 10:
                                 continue
                                 
@@ -153,7 +150,7 @@ if swimmer_name:
                             })
                             break 
 
-                # --- RENDER DISPLAY OUTPUTS ---
+                # --- RENDER THE LEGACY DISPLAY OUTPUT ---
                 if event_count > 0:
                     st.success("✅ Race schedule isolated successfully!")
                     st.metric(label="📊 Total Scheduled Events Found", value=event_count)
@@ -161,13 +158,9 @@ if swimmer_name:
                     
                     for i, block in enumerate(schedule_blocks, start=1):
                         with st.expander(f"🏅 Race {i}: {block['event']}", expanded=True):
-                            c1, c2, c3 = st.columns(3)
-                            with c1:
-                                st.markdown(f"🔥 **{block['heat']}**")
-                            with c2:
-                                st.markdown(f"🚪 **{block['lane']}**")
-                            with c3:
-                                st.caption(f"📄 Page {block['page']}")
+                            # Back to the chunky vertical alignment that looks awesome on mobile!
+                            st.write(f"🔥 **{block['heat']}**")
+                            st.write(f"🚪 **Lane Assignment:** {block['lane']} *(Page {block['page']})*")
                             st.caption(f"📝 Raw Row Data: `{block['line']}`")
                 else:
                     st.warning(f"❌ '{swimmer_name}' was found in the index, but their official Heat and Lane assignments haven't been posted in this document yet.")
