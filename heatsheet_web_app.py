@@ -53,7 +53,7 @@ def load_remote_pdf_stream(url):
 
 # --- UI WINDOW CONTENT ---
 st.title("🏊‍♂️ SwimAtlanta Heat Sheet Parser")
-st.write("Isolated micro-engine for automated race sheet parsing. High-concurrency cluster layout.")
+st.write("Find all races for swimmers quickly!")
 st.markdown("---")
 
 with st.spinner("🔄 Syncing SwimAtlanta database stream..."):
@@ -62,7 +62,7 @@ with st.spinner("🔄 Syncing SwimAtlanta database stream..."):
 selected_sheet = st.selectbox("📅 Choose Your Swim Meet Session:", list(MEET_DATABASE.keys()))
 TARGET_URL = MEET_DATABASE[selected_sheet]
 
-swimmer_name = st.text_input("👤 Enter Swimmer Last Name:", placeholder="Type a name to extract schedules...")
+swimmer_name = st.text_input("👤 Enter Swimmer Last Name:", placeholder="eg. Smith")
 
 # --- OPTIMIZED PARSING LAYER ---
 if swimmer_name:
