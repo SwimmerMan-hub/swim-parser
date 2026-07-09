@@ -98,7 +98,9 @@ if swimmer_name:
                 st.info("💡 Multiple entries found with that last name! Please choose yours:")
                 chosen_profile = st.selectbox("🎯 Select Your Profile Entry Configuration:", list(swimmer_profiles.keys()))
             else:
-                chosen_profile = list(swimmer_profiles.keys())
+                # --- THE CRITICAL FIX ---
+                # Grab the actual string name at index 0 out of the keys list so it isn't an unhashable list format!
+                chosen_profile = list(swimmer_profiles.keys())[0]
 
             # Second Pass: Extract Event, Heat, and Lane values locally on target pages
             if chosen_profile:
@@ -150,7 +152,7 @@ if swimmer_name:
                             })
                             break 
 
-                # --- RENDER THE LEGACY DISPLAY OUTPUT ---
+                # --- RENDER THE DISPLAY OUTPUT ---
                 if event_count > 0:
                     st.success("✅ Race schedule isolated successfully!")
                     st.metric(label="📊 Total Scheduled Events Found", value=event_count)
@@ -158,7 +160,6 @@ if swimmer_name:
                     
                     for i, block in enumerate(schedule_blocks, start=1):
                         with st.expander(f"🏅 Race {i}: {block['event']}", expanded=True):
-                            # Back to the chunky vertical alignment that looks awesome on mobile!
                             st.write(f"🔥 **{block['heat']}**")
                             st.write(f"🚪 **Lane Assignment:** {block['lane']} *(Page {block['page']})*")
                             st.caption(f"📝 Raw Row Data: `{block['line']}`")
